@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}{{ partner.name }} 정산내역 - SettleHub{% endblock %}
+
+{% block content %}
+
+<div class="d-flex align-items-center mb-4 gap-3">
+  <a href="/" class="btn btn-outline-secondary btn-sm">← 전체 현황</a>
+  <div>
+    <h5 class="fw-bold mb-0">{{ partner.name }}</h5>
+    <div class="text-muted small">2026년 월별 정산내역</div>
+  </div>
+</div>
+
+<!-- 월별 입금 상태 바지 -->
+<div class="card p-3 mb-4">
+  <div class="d-flex gap-2 flex-wrap">
+    {% for s in partner.statuses %}
+    <div class="text-center" style="min-width:52px">
+      <div class="small text-muted">{{ months[loop.index0] }}</div>
+      <span class="status-cell status-{{ s.type }} d-block mt-1">
+        {{ s.label if s.label else '—' }}
+      </span>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
+<!-- 정산 상세 내역 -->
+{% if records %}
+<div class="card p-0 overflow-hidden">
+  <div class="card-header bg-white px-3 py-2">
+    <span class="fw-bold">정산 상세 내역</span>
+    <span class="text-muted small ms-2">({{ records | length }}개월)</span>
+  </div>
+  <div class="table-responsive">
+    <table class="table align-middle mb-0" style="font-size:.9rem">
+      <thead class="table-light">
+        <tr>
+          <th class="ps-3">정산 월</th>
+          <th class="text-end">합계금액</th>
+          <th>내역</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in records %}
+        <tr>
+          <td class="ps-3 fw-semibold">{{ r.month }}</td>
+          <td class="text-end fw-bold text-primary">
+            {% if r.total %}
+            {{ "{:,}".format(r.total) }}원
+            {% else %}
+            <span class="text-muted">-</span>
+            {% endif %}
+          </td>
+          <td class="text-muted small">
+            {% for t in r.texts %}
+            <span class="me-2">{{ t }}</span>
+            {% endfor %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+      <tfoot class="table-light fw-bold">
+        <tr>
+          <td class="ps-3">합계</td>
+          <td class="text-end text-success">{{ "{:,}".format(grand_total) }}원</td>
+          <td></td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+</div>
+{% else %}
+<div class="card p-4 text-center text-muted">
+  상세 정산 시트가 없거나 파싱할 수 없습니다.
+</div>
+{% endif %}
+
+{% if partner.note %}
+<div class="mt-3 alert alert-warning py-2 small">
+  📌 {{ partner.note }}
+</div>
+{% endif %}
+
+{% endblock %}

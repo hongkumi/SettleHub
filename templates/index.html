@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}제휴정산 현황 2026 - SettleHub{% endblock %}
+
+{% block extra_style %}
+.month-header { font-size: .78rem; white-space: nowrap; }
+.stat-bar { height: 4px; border-radius: 2px; }
+table thead th { vertical-align: bottom; }
+.sticky-col { position: sticky; left: 0; background: #fff; z-index: 1; box-shadow: 2px 0 4px rgba(0,0,0,.06); }
+thead .sticky-col { background: #f8f9fa; }
+{% endblock %}
+
+{% block content %}
+
+<!-- 헤더 -->
+<div class="d-flex align-items-center mb-3 gap-3">
+  <div>
+    <h5 class="fw-bold mb-0">2026년 제휴정산 입금 현황</h5>
+    <div class="text-muted small">총 {{ total }}개 파트너 · 정산월 기준</div>
+  </div>
+  <div class="ms-auto d-flex gap-2">
+    <span class="badge bg-success px-3 py-2">✔ 입금완료</span>
+    <span class="badge bg-danger px-3 py-2">✕ 미입금</span>
+    <span class="badge bg-warning text-dark px-3 py-2">예외처리</span>
+    <span class="badge bg-light text-secondary border px-3 py-2">미정</span>
+  </div>
+</div>
+
+<!-- 월별 요약 바 -->
+<div class="card mb-3 p-3">
+  <div class="row g-2 text-center">
+    {% for s in stats %}
+    <div class="col" style="min-width:70px">
+      <div class="small fw-bold {% if loop.index0 == cur_idx %}text-primary{% else %}text-muted{% endif %}">
+        {{ s.month }}
+      </div>
+      <div class="d-flex gap-1 mt-1 justify-content-center" style="font-size:.7rem">
+        {% if s.paid %}
+        <span class="badge bg-success" title="입금완료">{{ s.paid }}</span>
+        {% endif %}
+        {% if s.refused %}
+        <span class="badge bg-danger" title="미입금">{{ s.refused }}</span>
+        {% endif %}
+        {% if s.pending %}
+        <span class="badge bg-secondary" title="미정">{{ s.pending }}</span>
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
+<!-- 파트너 × 월 그리드 -->
+<div class="card p-0 overflow-hidden">
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0" style="font-size:.85rem; min-width:900px">
+      <thead class="table-light">
+        <tr>
+          <th class="ps-3 sticky-col" style="min-width:160px">파트너</th>
+          {% for m in months %}
+          <th class="text-center month-header {% if loop.index0 == cur_idx %}table-primary{% endif %}"
+              style="min-width:58px">
+            {{ m }}
+          </th>
+          {% endfor %}
+          <th class="text-start ps-2" style="min-width:180px; font-size:.76rem; color:#aaa">비고</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in partners %}
+        <tr>
+          <td class="ps-3 sticky-col">
+            {% if p.has_sheet %}
+            <a href="/partner/{{ p.name | urlencode }}" class="partner-link">{{ p.name }}</a>
+            {% else %}
+            <span class="text-dark">{{ p.name }}</span>
+            {% endif %}
+          </td>
+          {% for s in p.statuses %}
+          <td class="text-center {% if loop.index0 == cur_idx %}bg-primary bg-opacity-10{% endif %}" style="padding:6px 4px">
+            <span class="status-cell status-{{ s.type }}">
+              {{ s.label if s.label else '—' }}
+            </span>
+          </td>
+          {% endfor %}
+          <td class="ps-2 text-muted" style="font-size:.75rem">{{ p.note }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- 범례 -->
+<div class="mt-3 text-muted small d-flex gap-3 flex-wrap">
+  <span>✔ = 입금완료</span>
+  <span>✕ = 미입금(x)</span>
+  <span>정산내역없음 = 해당월 내역 없음</span>
+  <span>— = 아직 정산월 미도래</span>
+  <span class="ms-auto"><a href="/api/reload" class="text-muted">데이터 새로고침</a></span>
+</div>
+
+{% endblock %}
