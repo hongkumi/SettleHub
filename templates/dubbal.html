@@ -1,0 +1,171 @@
+{% extends "base.html" %}
+{% block title %}두발히어로 정산 관리 - SettleHub{% endblock %}
+
+{% block extra_style %}
+.input-card { border-left: 4px solid #0d6efd; }
+.paid-row { background: #f0fff4; }
+.badge-paid { background: #198754; }
+{% endblock %}
+
+{% block content %}
+
+<div class="d-flex align-items-center mb-3 gap-3">
+  <a href="/" class="btn btn-outline-secondary btn-sm">← 전체 현황</a>
+  <div>
+    <h5 class="fw-bold mb-0">두발히어로 정산 관리</h5>
+    <div class="text-muted small">건당 {{ unit_price }}원 (부가세 별도) · 정산기준: 전월 1일~말일 · 발행: 당월 말일</div>
+  </div>
+</div>
+
+{% if msg %}
+<div class="alert alert-{{ msg[0] }} py-2 small mb-3">{{ msg[1] }}</div>
+{% endif %}
+
+<div class="row g-3">
+
+  <!-- 왼쪽: 건수 입력 폼 -->
+  <div class="col-lg-4">
+    <div class="card input-card p-4">
+      <h6 class="fw-bold mb-3">건수 입력 / 수정</h6>
+      <form method="post">
+        <div class="mb-3">
+          <label class="form-label fw-semibold">정산 월 <span class="text-danger">*</span></label>
+          <input type="text" name="ym" class="form-control" placeholder="예: 2026-07" required
+                 pattern="\d{4}-\d{2}">
+          <div class="form-text">정산 기준 월 (YYYY-MM)</div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label fw-semibold">건수 <span class="text-danger">*</span></label>
+          <div class="input-group">
+            <input type="number" name="count" class="form-control" placeholder="예: 8650"
+                   min="0" required id="countInput">
+            <span class="input-group-text">건</span>
+          </div>
+          <div class="form-text" id="calcPreview"></div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label fw-semibold">세금계산서 발행일</label>
+          <input type="text" name="invoice_date" class="form-control" placeholder="예: 2026-07-31">
+        </div>
+        <div class="mb-3">
+          <label class="form-label fw-semibold">입금일</label>
+          <input type="text" name="payment_date" class="form-control" placeholder="예: 2026-07-31">
+        </div>
+        <div class="mb-3">
+          <label class="form-label fw-semibold">비고</label>
+          <input type="text" name="note" class="form-control" placeholder="선택 입력">
+        </div>
+        <button type="submit" class="btn btn-primary w-100 fw-bold">저장</button>
+      </form>
+    </div>
+
+    <!-- 단가 안내 -->
+    <div class="card p-3 mt-3 bg-light border-0">
+      <div class="small text-muted fw-bold mb-1">청구 계산식</div>
+      <div class="small">공급가액 = 건수 × {{ unit_price }}원</div>
+      <div class="small">부가세 = 공급가액 × 10%</div>
+      <div class="small fw-bold text-primary">청구금액 = 공급가액 + 부가세</div>
+    </div>
+  </div>
+
+  <!-- 오른쪽: 월별 현황 테이블 -->
+  <div class="col-lg-8">
+    <div class="card p-0 overflow-hidden">
+      <div class="card-header bg-white d-flex align-items-center px-3 py-2">
+        <span class="fw-bold">월별 정산 현황</span>
+        <span class="badge bg-secondary ms-2">{{ records | length }}건</span>
+        <span class="ms-auto small text-muted">
+          누적 공급가액: <strong class="text-primary">
+            {{ "{:,}".format(records | sum(attribute='supply')) }}원
+          </strong>
+        </span>
+      </div>
+      {% if records %}
+      <div class="table-responsive">
+        <table class="table align-middle mb-0" style="font-size:.9rem">
+          <thead class="table-light">
+            <tr>
+              <th class="ps-3">정산 월</th>
+              <th class="text-end">건수</th>
+              <th class="text-end">공급가액</th>
+              <th class="text-end">부가세</th>
+              <th class="text-end">청구금액</th>
+              <th class="text-center">상태</th>
+              <th class="text-center">청구서</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in records %}
+            <tr class="{{ 'paid-row' if r.paid else '' }}">
+              <td class="ps-3 fw-semibold">
+                {{ r.label }}
+                {% if r.note %}
+                <div class="text-muted" style="font-size:.75rem">{{ r.note }}</div>
+                {% endif %}
+              </td>
+              <td class="text-end">{{ "{:,}".format(r.count) }}</td>
+              <td class="text-end">{{ "{:,}".format(r.supply) }}원</td>
+              <td class="text-end text-muted">{{ "{:,}".format(r.vat) }}원</td>
+              <td class="text-end fw-bold text-primary">{{ "{:,}".format(r.total) }}원</td>
+              <td class="text-center">
+                <form method="post" action="/dubbal/{{ r.id }}/toggle-paid" style="display:inline">
+                  {% if r.paid %}
+                  <button class="btn btn-success btn-sm px-2 py-1" style="font-size:.75rem">✔ 입금완료</button>
+                  {% else %}
+                  <button class="btn btn-outline-secondary btn-sm px-2 py-1" style="font-size:.75rem">미입금</button>
+                  {% endif %}
+                </form>
+              </td>
+              <td class="text-center">
+                <a href="/dubbal/invoice/{{ r.ym }}" target="_blank"
+                   class="btn btn-outline-primary btn-sm px-2 py-1" style="font-size:.75rem">
+                  📄 청구서
+                </a>
+              </td>
+              <td class="text-end pe-3">
+                <form method="post" action="/dubbal/{{ r.id }}/delete"
+                      onsubmit="return confirm('삭제하시겠습니까?')">
+                  <button class="btn btn-outline-danger btn-sm px-2 py-1" style="font-size:.75rem">삭제</button>
+                </form>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+          <tfoot class="table-light fw-bold">
+            <tr>
+              <td class="ps-3">합계</td>
+              <td class="text-end">{{ "{:,}".format(records | sum(attribute='count')) }}</td>
+              <td class="text-end text-primary">{{ "{:,}".format(records | sum(attribute='supply')) }}원</td>
+              <td class="text-end text-muted">{{ "{:,}".format(records | sum(attribute='vat')) }}원</td>
+              <td class="text-end text-success">{{ "{:,}".format(records | sum(attribute='total')) }}원</td>
+              <td colspan="3"></td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+      {% else %}
+      <div class="p-4 text-center text-muted">아직 입력된 데이터가 없습니다.</div>
+      {% endif %}
+    </div>
+  </div>
+
+</div>
+
+{% endblock %}
+
+{% block extra_script %}
+<script>
+document.getElementById('countInput').addEventListener('input', function() {
+  const count = parseInt(this.value) || 0;
+  const supply = count * {{ unit_price }};
+  const vat = Math.round(supply * 0.1);
+  const total = supply + vat;
+  const fmt = n => n.toLocaleString('ko-KR');
+  document.getElementById('calcPreview').innerHTML =
+    count > 0
+      ? `공급가액 <strong>${fmt(supply)}원</strong> + 부가세 ${fmt(vat)}원 = <strong class="text-primary">${fmt(total)}원</strong>`
+      : '';
+});
+</script>
+{% endblock %}

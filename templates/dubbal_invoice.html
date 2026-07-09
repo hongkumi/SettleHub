@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <title>청구서 - 두발히어로 {{ label }} - SettleHub</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif;
+           font-size: 13px; color: #1a1a1a; background: #fff; padding: 20px; }
+
+    .invoice-wrap { max-width: 720px; margin: 0 auto; }
+
+    .inv-title { text-align: center; font-size: 26px; font-weight: 900;
+                 letter-spacing: 8px; border: 3px double #1a1a1a;
+                 padding: 10px 0; margin-bottom: 18px; }
+
+    .inv-meta { display: flex; justify-content: space-between;
+                margin-bottom: 16px; font-size: 12px; }
+    .inv-meta .block { border: 1px solid #999; padding: 8px 12px; min-width: 200px; }
+    .inv-meta .block .label { color: #666; font-size: 11px; margin-bottom: 2px; }
+    .inv-meta .block .value { font-weight: 700; font-size: 14px; }
+
+    .inv-total-box { border: 2px solid #1a1a1a; padding: 10px 16px;
+                     margin-bottom: 18px; display: flex; align-items: center;
+                     justify-content: space-between; }
+    .inv-total-box .lbl { font-size: 14px; }
+    .inv-total-box .amt { font-size: 22px; font-weight: 900; color: #0d6efd; }
+
+    .parties { display: flex; gap: 12px; margin-bottom: 18px; }
+    .party-box { flex: 1; border: 1px solid #ccc; padding: 10px 14px; font-size: 12px; }
+    .party-box .party-title { font-weight: 700; font-size: 13px; border-bottom: 1px solid #eee;
+                               padding-bottom: 4px; margin-bottom: 6px; }
+    .party-box .row-item { display: flex; gap: 6px; margin-bottom: 2px; }
+    .party-box .key { color: #666; min-width: 60px; }
+
+    table { width: 100%; border-collapse: collapse; margin-bottom: 18px; }
+    th { background: #2c3e50; color: #fff; padding: 8px 10px; text-align: center;
+         font-size: 12px; font-weight: 600; }
+    td { border: 1px solid #ddd; padding: 7px 10px; font-size: 12.5px; }
+    td.num { text-align: right; }
+    tr:nth-child(even) { background: #f9f9f9; }
+    .total-row td { font-weight: 700; background: #eef2ff; }
+    .grand-row td { font-weight: 900; background: #dde8ff; font-size: 13.5px; }
+
+    .sign-area { display: flex; justify-content: flex-end; margin-top: 30px; }
+    .sign-box { border: 1px solid #aaa; padding: 12px 20px; text-align: center; min-width: 180px; }
+    .sign-box .company { font-weight: 700; font-size: 14px; margin-bottom: 6px; }
+    .sign-box .sign-line { border-top: 1px solid #aaa; margin-top: 30px; padding-top: 4px;
+                           font-size: 11px; color: #888; }
+
+    .note-area { border: 1px solid #ddd; padding: 8px 12px; font-size: 11.5px;
+                 color: #555; margin-bottom: 18px; }
+    .note-area strong { color: #333; }
+
+    @media print {
+      body { padding: 0; }
+      .no-print { display: none !important; }
+      .inv-title { page-break-after: avoid; }
+    }
+  </style>
+</head>
+<body>
+<div class="invoice-wrap">
+
+  <!-- 상단 버튼 (인쇄 시 숨김) -->
+  <div class="no-print" style="text-align:right; margin-bottom:12px; display:flex; gap:8px; justify-content:flex-end">
+    <a href="/dubbal" style="font-size:13px; color:#555; text-decoration:none">← 목록으로</a>
+    <button onclick="window.print()" style="background:#0d6efd; color:#fff; border:none;
+            padding:6px 20px; border-radius:4px; font-size:13px; cursor:pointer; font-weight:600">
+      🖨️ 인쇄 / PDF 저장
+    </button>
+  </div>
+
+  <div class="inv-title">청 구 서</div>
+
+  <!-- 발행 정보 -->
+  <div class="inv-meta">
+    <div class="block">
+      <div class="label">문서번호</div>
+      <div class="value">DH-{{ r.ym | replace('-', '') }}</div>
+    </div>
+    <div class="block">
+      <div class="label">정산 기간</div>
+      <div class="value">{{ label }} (전월 1일 ~ 말일)</div>
+    </div>
+    <div class="block">
+      <div class="label">발행일자</div>
+      <div class="value">{{ issue_date }}</div>
+    </div>
+  </div>
+
+  <!-- 청구금액 합계 박스 -->
+  <div class="inv-total-box">
+    <span class="lbl">아래와 같이 청구합니다.</span>
+    <span class="amt">￦ {{ "{:,}".format(total) }} (VAT 포함)</span>
+  </div>
+
+  <!-- 공급자 / 공급받는자 -->
+  <div class="parties">
+    <div class="party-box">
+      <div class="party-title">▶ 공급자 (청구인)</div>
+      <div class="row-item"><span class="key">상호</span><span>주식회사 셀메이트</span></div>
+      <div class="row-item"><span class="key">대표자</span><span></span></div>
+      <div class="row-item"><span class="key">사업자번호</span><span></span></div>
+      <div class="row-item"><span class="key">주소</span><span></span></div>
+      <div class="row-item"><span class="key">이메일</span><span>support@sellmate.co.kr</span></div>
+    </div>
+    <div class="party-box">
+      <div class="party-title">▶ 공급받는자 (수신)</div>
+      <div class="row-item"><span class="key">상호</span><span>두발히어로</span></div>
+      <div class="row-item"><span class="key">담당자</span><span></span></div>
+      <div class="row-item"><span class="key">이메일</span><span></span></div>
+      <div class="row-item"><span class="key">비고</span>
+        <span>입금일: 당월 말일까지</span></div>
+    </div>
+  </div>
+
+  <!-- 품목 테이블 -->
+  <table>
+    <thead>
+      <tr>
+        <th>항목</th>
+        <th>정산 월</th>
+        <th>건수</th>
+        <th>단가</th>
+        <th>공급가액</th>
+        <th>부가세 (10%)</th>
+        <th>합계</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>배송 건수 정산</td>
+        <td style="text-align:center">{{ label }}</td>
+        <td class="num">{{ "{:,}".format(r.count) }} 건</td>
+        <td class="num">{{ "{:,}".format(unit_price) }} 원</td>
+        <td class="num">{{ "{:,}".format(supply) }} 원</td>
+        <td class="num">{{ "{:,}".format(vat) }} 원</td>
+        <td class="num">{{ "{:,}".format(total) }} 원</td>
+      </tr>
+    </tbody>
+    <tfoot>
+      <tr class="grand-row">
+        <td colspan="4" style="text-align:center">합 계</td>
+        <td class="num">{{ "{:,}".format(supply) }} 원</td>
+        <td class="num">{{ "{:,}".format(vat) }} 원</td>
+        <td class="num">{{ "{:,}".format(total) }} 원</td>
+      </tr>
+    </tfoot>
+  </table>
+
+  <!-- 안내 사항 -->
+  <div class="note-area">
+    <strong>입금 안내</strong><br>
+    · 세금계산서 발행일: {{ issue_date }}<br>
+    · 입금 기한: {{ r.payment_date if r.payment_date else '당월 말일' }}<br>
+    · 정산 기준: {{ label }} (전월 1일 ~ 말일 기준 배송 건수)<br>
+    · 단가: 건당 {{ unit_price }}원 (부가세 별도)<br>
+    {% if r.note %}· 비고: {{ r.note }}<br>{% endif %}
+  </div>
+
+  <!-- 서명란 -->
+  <div class="sign-area">
+    <div class="sign-box">
+      <div class="company">주식회사 셀메이트</div>
+      <div style="font-size:11px; color:#888; margin-bottom:4px">대표이사</div>
+      <div style="height:36px"></div>
+      <div class="sign-line">(인)</div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>
