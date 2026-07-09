@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 
 app = Flask(__name__)
+app.json.ensure_ascii = False
 
 EXCEL_PATH = os.environ.get(
     'EXCEL_PATH',
@@ -329,11 +330,305 @@ def dubbal_invoice(ym):
                            unit_price=DUBBAL_UNIT_PRICE)
 
 
-# ── 기타 ─────────────────────────────────────────────────
+# ── 기타 (레거시) ─────────────────────────────────────────
 @app.route('/api/reload')
 def reload_cache():
     _cache.clear()
     return jsonify({'ok': True, 'message': '캐시가 초기화되었습니다.'})
+
+
+# ══════════════════════════════════════════════════════════
+#  REST API  v1
+#  Base URL: /api/v1
+#
+#  Partners (Excel, read-only)
+#    GET  /api/v1/partners               전체 파트너 + 월별 입금 상태
+#    GET  /api/v1/partners/<name>        파트너 상세 + 월별 정산 내역
+#
+#  두발히어로 (DB, CRUD)
+#    GET    /api/v1/dubbal               전체 목록 + 합계
+#    POST   /api/v1/dubbal               건수 등록 / 수정 (upsert)
+#    GET    /api/v1/dubbal/<ym>          특정 월 조회  (ym: YYYY-MM)
+#    PUT    /api/v1/dubbal/<ym>          특정 월 전체 수정
+#    DELETE /api/v1/dubbal/<ym>          삭제
+#    PATCH  /api/v1/dubbal/<ym>/paid     입금 상태 토글
+#    GET    /api/v1/dubbal/<ym>/invoice  청구서 데이터 (JSON)
+#
+#  Cache
+#    POST   /api/v1/cache/reload         엑셀 캐시 초기화
+# ══════════════════════════════════════════════════════════
+
+def ok(data, status=200):
+    return jsonify({'ok': True, 'data': data}), status
+
+def err(msg, status=400):
+    return jsonify({'ok': False, 'error': msg}), status
+
+def dubbal_row_to_dict(r):
+    """DB Row → API 응답용 dict (계산 필드 포함)"""
+    d = dict(r) if not isinstance(r, dict) else r
+    supply, vat, total = calc_dubbal(d['count'])
+    return {
+        'id':           d['id'],
+        'ym':           d['ym'],
+        'label':        ym_to_label(d['ym']),
+        'count':        d['count'],
+        'supply':       supply,
+        'vat':          vat,
+        'total':        total,
+        'paid':         bool(d['paid']),
+        'invoice_date': d['invoice_date'],
+        'payment_date': d['payment_date'],
+        'note':         d['note'],
+        'created_at':   d['created_at'],
+        'updated_at':   d['updated_at'],
+    }
+
+
+# ── Partners ─────────────────────────────────────────────
+
+@app.route('/api/v1/partners', methods=['GET'])
+def api_partners():
+    data = load_status_data()
+    return ok({
+        'year':     2026,
+        'months':   data['months'],
+        'partners': [
+            {
+                'name':       p['name'],
+                'note':       p['note'],
+                'has_detail': p['has_sheet'],
+                'statuses':   [
+                    {'month': data['months'][i], 'type': s['type'], 'label': s['label']}
+                    for i, s in enumerate(p['statuses'])
+                ],
+            }
+            for p in data['partners']
+        ],
+    })
+
+
+@app.route('/api/v1/partners/<path:name>', methods=['GET'])
+def api_partner_detail(name):
+    data = load_status_data()
+    partner = next((p for p in data['partners'] if p['name'] == name), None)
+    if not partner:
+        return err('파트너를 찾을 수 없습니다.', 404)
+
+    records = load_partner_detail(name) or []
+    return ok({
+        'name':       partner['name'],
+        'note':       partner['note'],
+        'has_detail': partner['has_sheet'],
+        'statuses':   [
+            {'month': data['months'][i], 'type': s['type'], 'label': s['label']}
+            for i, s in enumerate(partner['statuses'])
+        ],
+        'records': [
+            {'month': r['month'], 'total': r['total'], 'texts': r['texts']}
+            for r in records
+        ],
+        'grand_total': sum(r['total'] for r in records),
+    })
+
+
+# ── 두발히어로 CRUD ───────────────────────────────────────
+
+@app.route('/api/v1/dubbal', methods=['GET'])
+def api_dubbal_list():
+    rows = get_dubbal_records()
+    items = [dubbal_row_to_dict(r) for r in rows]
+    total_count  = sum(i['count']  for i in items)
+    total_supply = sum(i['supply'] for i in items)
+    total_vat    = sum(i['vat']    for i in items)
+    return ok({
+        'unit_price': DUBBAL_UNIT_PRICE,
+        'vat_rate':   VAT_RATE,
+        'records':    items,
+        'summary': {
+            'record_count':  len(items),
+            'total_count':   total_count,
+            'total_supply':  total_supply,
+            'total_vat':     total_vat,
+            'total_amount':  total_supply + total_vat,
+            'paid_count':    sum(1 for i in items if i['paid']),
+            'unpaid_count':  sum(1 for i in items if not i['paid']),
+        },
+    })
+
+
+def _parse_dubbal_body():
+    """POST/PUT body 파싱 — form 또는 JSON 모두 지원"""
+    if request.is_json:
+        b = request.get_json(silent=True) or {}
+    else:
+        b = request.form
+
+    ym           = str(b.get('ym', '')).strip()
+    count_raw    = str(b.get('count', '')).strip()
+    invoice_date = str(b.get('invoice_date', '')).strip() or None
+    payment_date = str(b.get('payment_date', '')).strip() or None
+    note         = str(b.get('note', '')).strip() or None
+
+    if not re.match(r'^\d{4}-\d{2}$', ym):
+        return None, None, None, None, None, 'ym은 YYYY-MM 형식이어야 합니다.'
+    if not count_raw.lstrip('-').isdigit() or int(count_raw) < 0:
+        return None, None, None, None, None, 'count는 0 이상의 정수여야 합니다.'
+
+    return ym, int(count_raw), invoice_date, payment_date, note, None
+
+
+@app.route('/api/v1/dubbal', methods=['POST'])
+def api_dubbal_create():
+    ym, count, invoice_date, payment_date, note, error = _parse_dubbal_body()
+    if error:
+        return err(error)
+
+    with get_db() as conn:
+        conn.execute("""
+            INSERT INTO dubbal_records (ym, count, invoice_date, payment_date, note)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(ym) DO UPDATE SET
+                count        = excluded.count,
+                invoice_date = excluded.invoice_date,
+                payment_date = excluded.payment_date,
+                note         = excluded.note,
+                updated_at   = datetime('now','localtime')
+        """, (ym, count, invoice_date, payment_date, note))
+        conn.commit()
+        row = conn.execute("SELECT * FROM dubbal_records WHERE ym = ?", (ym,)).fetchone()
+
+    return ok(dubbal_row_to_dict(row), 201)
+
+
+@app.route('/api/v1/dubbal/<ym>', methods=['GET'])
+def api_dubbal_get(ym):
+    with get_db() as conn:
+        row = conn.execute("SELECT * FROM dubbal_records WHERE ym = ?", (ym,)).fetchone()
+    if not row:
+        return err(f'{ym} 데이터가 없습니다.', 404)
+    return ok(dubbal_row_to_dict(row))
+
+
+@app.route('/api/v1/dubbal/<ym>', methods=['PUT'])
+def api_dubbal_update(ym):
+    # ym은 URL에서 가져오므로 body의 ym은 무시
+    if request.is_json:
+        b = request.get_json(silent=True) or {}
+    else:
+        b = request.form
+
+    count_raw    = str(b.get('count', '')).strip()
+    invoice_date = str(b.get('invoice_date', '')).strip() or None
+    payment_date = str(b.get('payment_date', '')).strip() or None
+    note         = str(b.get('note', '')).strip() or None
+
+    if not re.match(r'^\d{4}-\d{2}$', ym):
+        return err('ym은 YYYY-MM 형식이어야 합니다.')
+    if not count_raw.lstrip('-').isdigit() or int(count_raw) < 0:
+        return err('count는 0 이상의 정수여야 합니다.')
+
+    with get_db() as conn:
+        exists = conn.execute("SELECT id FROM dubbal_records WHERE ym = ?", (ym,)).fetchone()
+        if not exists:
+            return err(f'{ym} 데이터가 없습니다. POST로 먼저 생성하세요.', 404)
+        conn.execute("""
+            UPDATE dubbal_records
+            SET count = ?, invoice_date = ?, payment_date = ?, note = ?,
+                updated_at = datetime('now','localtime')
+            WHERE ym = ?
+        """, (int(count_raw), invoice_date, payment_date, note, ym))
+        conn.commit()
+        row = conn.execute("SELECT * FROM dubbal_records WHERE ym = ?", (ym,)).fetchone()
+
+    return ok(dubbal_row_to_dict(row))
+
+
+@app.route('/api/v1/dubbal/<ym>', methods=['DELETE'])
+def api_dubbal_delete(ym):
+    with get_db() as conn:
+        exists = conn.execute("SELECT id FROM dubbal_records WHERE ym = ?", (ym,)).fetchone()
+        if not exists:
+            return err(f'{ym} 데이터가 없습니다.', 404)
+        conn.execute("DELETE FROM dubbal_records WHERE ym = ?", (ym,))
+        conn.commit()
+    return ok({'deleted': ym})
+
+
+@app.route('/api/v1/dubbal/<ym>/paid', methods=['PATCH'])
+def api_dubbal_paid(ym):
+    """paid 토글. body에 {"paid": true/false} 를 주면 강제 지정, 없으면 토글."""
+    with get_db() as conn:
+        row = conn.execute("SELECT * FROM dubbal_records WHERE ym = ?", (ym,)).fetchone()
+        if not row:
+            return err(f'{ym} 데이터가 없습니다.', 404)
+
+        b = request.get_json(silent=True) or {}
+        if 'paid' in b:
+            new_paid = 1 if b['paid'] else 0
+        else:
+            new_paid = 1 - row['paid']
+
+        conn.execute("""
+            UPDATE dubbal_records SET paid = ?, updated_at = datetime('now','localtime')
+            WHERE ym = ?
+        """, (new_paid, ym))
+        conn.commit()
+        row = conn.execute("SELECT * FROM dubbal_records WHERE ym = ?", (ym,)).fetchone()
+
+    return ok(dubbal_row_to_dict(row))
+
+
+@app.route('/api/v1/dubbal/<ym>/invoice', methods=['GET'])
+def api_dubbal_invoice(ym):
+    with get_db() as conn:
+        row = conn.execute("SELECT * FROM dubbal_records WHERE ym = ?", (ym,)).fetchone()
+    if not row:
+        return err(f'{ym} 데이터가 없습니다.', 404)
+
+    r = dict(row)
+    supply, vat, total = calc_dubbal(r['count'])
+    label = ym_to_label(ym)
+    issue_date = r['invoice_date'] or datetime.now().strftime('%Y-%m-%d')
+
+    return ok({
+        'doc_number':  f"DH-{ym.replace('-', '')}",
+        'ym':          ym,
+        'label':       label,
+        'issue_date':  issue_date,
+        'period':      f"{label} (전월 1일 ~ 말일)",
+        'supplier': {
+            'name':  '주식회사 셀메이트',
+            'email': 'support@sellmate.co.kr',
+        },
+        'recipient': {
+            'name':     '두발히어로',
+            'due_date': r['payment_date'] or '당월 말일',
+        },
+        'items': [{
+            'description': '배송 건수 정산',
+            'count':       r['count'],
+            'unit_price':  DUBBAL_UNIT_PRICE,
+            'supply':      supply,
+            'vat':         vat,
+            'total':       total,
+        }],
+        'totals': {
+            'supply': supply,
+            'vat':    vat,
+            'total':  total,
+        },
+        'note': r['note'],
+        'paid': bool(r['paid']),
+    })
+
+
+# ── Cache ─────────────────────────────────────────────────
+
+@app.route('/api/v1/cache/reload', methods=['POST'])
+def api_cache_reload():
+    _cache.clear()
+    return ok({'message': '엑셀 캐시가 초기화되었습니다.'})
 
 
 if __name__ == '__main__':
